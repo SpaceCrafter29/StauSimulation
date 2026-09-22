@@ -34,6 +34,7 @@ function initMap() {
   if (MODE === "builder") {
     map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 8 }).setView([0, 0], 2);
     document.getElementById("map").classList.add("blank-canvas");
+    setupBuilderGrid();
   } else {
     map = L.map("map").setView([51.1657, 10.4515], 6);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -49,6 +50,31 @@ function initMap() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") cancelPending();
   });
+}
+
+// Rasterlinien im Builder folgen dem Koordinatensystem statt fest am Bildschirm
+// zu kleben: 1 Kästchen = 1 Karten-Einheit ("km"), wird beim Zoomen also größer/
+// kleiner, wie bei echtem Karopapier mit Maßstab - nur so lässt sich damit die
+// Größe eines Netzes abschätzen, bevor man Streckenlängen einträgt.
+function setupBuilderGrid() {
+  const mapEl = document.getElementById("map");
+  const legend = document.createElement("div");
+  legend.className = "grid-legend";
+  legend.textContent = "1 Kästchen ≈ 1 km";
+  mapEl.appendChild(legend);
+
+  function updateGrid() {
+    const zoom = map.getZoom();
+    const unitPx = Math.abs(map.project([0, 1], zoom).x - map.project([0, 0], zoom).x);
+    const origin = map.latLngToContainerPoint([0, 0]);
+    const offX = ((origin.x % unitPx) + unitPx) % unitPx;
+    const offY = ((origin.y % unitPx) + unitPx) % unitPx;
+    mapEl.style.backgroundSize = `${unitPx}px ${unitPx}px`;
+    mapEl.style.backgroundPosition = `${offX}px ${offY}px`;
+  }
+
+  map.on("move zoom", updateGrid);
+  updateGrid();
 }
 
 function setTool(tool) {

@@ -167,10 +167,26 @@ table.list-table th { color: var(--text-dim); font-weight: 500; }
 /* Builder: leerer Canvas statt Weltkarte - dezentes Rastermuster */
 .blank-canvas {
   background-image:
-    linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+    linear-gradient(rgba(255,255,255,0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.22) 1px, transparent 1px);
+  /* background-size/-position werden von setupBuilderGrid() in app.js live
+     nachgeführt, damit das Raster mit dem Zoom mitskaliert (1 Kästchen = 1
+     Karten-Einheit) - die Werte hier sind nur ein Platzhalter vor dem ersten Update. */
   background-size: 40px 40px;
-  background-color: #0a0f14 !important;
+  background-color: #16321f !important;
+}
+
+.grid-legend {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 500;
+  background: rgba(15, 23, 32, 0.75);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  pointer-events: none;
 }
 
 /* --- Modal (ersetzt native prompt()-Dialoge) --- */
