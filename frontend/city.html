@@ -6,7 +6,6 @@
 <title>StauSimulation – Stadt laden</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="css/style.css">
-<style>.active-tool { outline: 2px solid #fff; }</style>
 </head>
 <body data-mode="city">
 <header>
@@ -27,10 +26,10 @@
 
     <div class="sidebar-section">
       <h3>Werkzeug</h3>
-      <p class="hint">Route/Nachfrage: zwei Kreuzungen anklicken, Fahrzeuge/h eingeben.<br>Sperren: auf eine Straße klicken.</p>
-      <div class="row">
-        <button class="small active-tool" data-tool="demand" onclick="setTool('demand')">Route</button>
-        <button class="small secondary" data-tool="close" onclick="setTool('close')">Sperren</button>
+      <p class="hint">Route: zwei Kreuzungen anklicken, Fahrzeuge/h eingeben. Sperren: auf eine Straße klicken.</p>
+      <div class="tool-grid" style="grid-template-columns: repeat(2, 1fr);">
+        <button class="tool-btn active-tool" data-tool="demand" onclick="setTool('demand')"><span class="tool-icon">🚗</span>Route</button>
+        <button class="tool-btn" data-tool="close" onclick="setTool('close')"><span class="tool-icon">⛔</span>Sperren</button>
       </div>
     </div>
 

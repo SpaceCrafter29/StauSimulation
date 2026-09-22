@@ -111,6 +111,8 @@ function onMapClick(latlng) {
     // (z.B. für eine Ausfahrt/Rampe, die nicht schnurgerade ist)
     pendingWaypoints.push([latlng.lat, latlng.lng]);
     updatePreviewLine();
+  } else if (currentTool === "junction" && pendingJunctionTemplate) {
+    stampJunction(latlng, pendingJunctionTemplate);
   }
 }
 
@@ -329,15 +331,174 @@ function finishEdge(aId, bId, waypoints) {
       };
       network.edges.push(edge);
       drawEdge(edge);
+      invalidateSimulation();
       renderEdgeList();
     }
   );
+}
+
+/* --- Kreuzungs-Baukasten: stempelt vorgefertigte Kreuzungstypen (mehrere
+ * Knoten + Kanten auf einmal) an eine Klickposition, statt sie einzeln von
+ * Hand zu bauen. */
+let pendingJunctionTemplate = null;
+
+const JUNCTION_TEMPLATES = {
+  cross: "Kreuzung (4-Wege)",
+  t: "T-Kreuzung",
+  roundabout: "Kreisverkehr",
+  interchange: "Autobahnkreuz",
+  triangle: "Autobahndreieck",
+};
+
+function openJunctionPicker() {
+  showModal(
+    "Kreuzung platzieren",
+    [
+      {
+        key: "type",
+        label: "Typ",
+        type: "select",
+        value: "interchange",
+        options: Object.entries(JUNCTION_TEMPLATES).map(([value, label]) => ({ value, label })),
+      },
+      { key: "sizeKm", label: "Größe (km)", value: 1, step: 0.1 },
+      {
+        key: "preset",
+        label: "Straßentyp (Zufahrten)",
+        type: "select",
+        value: "autobahn",
+        options: Object.entries(ROAD_PRESETS)
+          .filter(([key]) => key !== "custom")
+          .map(([value, p]) => ({ value, label: p.label })),
+      },
+    ],
+    (values) => {
+      pendingJunctionTemplate = { type: values.type, sizeKm: values.sizeKm > 0 ? values.sizeKm : 1, preset: values.preset };
+      setTool("junction");
+    },
+    "Danach auf den Canvas klicken, um die Kreuzung dort zu platzieren. Mehrfaches Klicken stempelt mehrere Kopien."
+  );
+}
+
+function stampJunction(centerLatLng, template) {
+  const cy = centerLatLng.lat;
+  const cx = centerLatLng.lng;
+  const r = template.sizeKm;
+  const preset = ROAD_PRESETS[template.preset] || ROAD_PRESETS.stadtstrasse;
+  const RAMP_SPEED = 60;
+  const RAMP_LANES = 1;
+
+  const newNode = (lat, lon) => {
+    const id = `n${++nodeCounter}`;
+    const node = { id, lat, lon, signal: null };
+    network.nodes.push(node);
+    drawNode(node);
+    return id;
+  };
+  const newEdge = (aId, bId, speed, lanes, waypoints, name) => {
+    const id = `e${++edgeCounter}`;
+    const nodeA = network.nodes.find((n) => n.id === aId);
+    const nodeB = network.nodes.find((n) => n.id === bId);
+    const straightLen = Math.hypot(nodeB.lat - nodeA.lat, nodeB.lon - nodeA.lon);
+    const edge = {
+      id,
+      from: aId,
+      to: bId,
+      length_km: Math.max(0.05, straightLen),
+      speed_kmh: speed,
+      lanes,
+      name: name || null,
+      waypoints: waypoints || [],
+    };
+    network.edges.push(edge);
+    drawEdge(edge);
+    return id;
+  };
+
+  if (template.type === "cross" || template.type === "t") {
+    const center = newNode(cy, cx);
+    const stubs =
+      template.type === "cross"
+        ? [
+            [cy + r, cx],
+            [cy, cx + r],
+            [cy - r, cx],
+            [cy, cx - r],
+          ]
+        : [
+            [cy + r, cx],
+            [cy, cx + r],
+            [cy, cx - r],
+          ];
+    stubs.forEach(([lat, lon]) => {
+      const stubId = newNode(lat, lon);
+      newEdge(center, stubId, preset.speed, preset.lanes);
+    });
+  } else if (template.type === "roundabout") {
+    const N_RING = 8;
+    const ring = [];
+    for (let i = 0; i < N_RING; i++) {
+      const angle = (i / N_RING) * 2 * Math.PI;
+      ring.push(newNode(cy + r * Math.sin(angle), cx + r * Math.cos(angle)));
+    }
+    for (let i = 0; i < N_RING; i++) {
+      newEdge(ring[i], ring[(i + 1) % N_RING], 30, 1, [], "Kreisverkehr");
+    }
+    // Ausfahrten an N/O/S/W - Ring-Indizes entsprechen bei 8 Ringknoten genau
+    // diesen vier Himmelsrichtungen (i*45°)
+    const exits = [
+      { idx: 2, angle: Math.PI / 2 },
+      { idx: 0, angle: 0 },
+      { idx: 6, angle: -Math.PI / 2 },
+      { idx: 4, angle: Math.PI },
+    ];
+    exits.forEach(({ idx, angle }) => {
+      const stubId = newNode(cy + 2 * r * Math.sin(angle), cx + 2 * r * Math.cos(angle));
+      newEdge(ring[idx], stubId, preset.speed, preset.lanes, [], "Ausfahrt");
+    });
+  } else if (template.type === "interchange" || template.type === "triangle") {
+    // Die beiden Autobahnen kreuzen sich OHNE gemeinsamen Knoten (echte
+    // Überführung, keine ebenerdige Kreuzung) - Verbindung nur über die
+    // gekrümmten Rampen, genau wie bei einem echten Autobahnkreuz/-dreieck.
+    const wStub = newNode(cy, cx - 2 * r);
+    const h1 = newNode(cy, cx - r / 3);
+    const h2 = newNode(cy, cx + r / 3);
+    const eStub = newNode(cy, cx + 2 * r);
+    newEdge(wStub, h1, preset.speed, preset.lanes, [], "Autobahn West");
+    newEdge(h1, h2, preset.speed, preset.lanes, [], "Autobahn");
+    newEdge(h2, eStub, preset.speed, preset.lanes, [], "Autobahn Ost");
+
+    if (template.type === "interchange") {
+      const nStub = newNode(cy + 2 * r, cx);
+      const v1 = newNode(cy + r / 3, cx);
+      const v2 = newNode(cy - r / 3, cx);
+      const sStub = newNode(cy - 2 * r, cx);
+      newEdge(nStub, v1, preset.speed, preset.lanes, [], "Autobahn Nord");
+      newEdge(v1, v2, preset.speed, preset.lanes, [], "Autobahn");
+      newEdge(v2, sStub, preset.speed, preset.lanes, [], "Autobahn Süd");
+
+      newEdge(h1, v1, RAMP_SPEED, RAMP_LANES, [[cy + r / 3, cx - r / 3]], "Rampe NW");
+      newEdge(h2, v1, RAMP_SPEED, RAMP_LANES, [[cy + r / 3, cx + r / 3]], "Rampe NO");
+      newEdge(h1, v2, RAMP_SPEED, RAMP_LANES, [[cy - r / 3, cx - r / 3]], "Rampe SW");
+      newEdge(h2, v2, RAMP_SPEED, RAMP_LANES, [[cy - r / 3, cx + r / 3]], "Rampe SO");
+    } else {
+      const sStub = newNode(cy - 2 * r, cx);
+      const v2 = newNode(cy - r / 3, cx);
+      newEdge(sStub, v2, preset.speed, preset.lanes, [], "Zubringer Süd");
+      newEdge(v2, h1, RAMP_SPEED, RAMP_LANES, [[cy - r / 3, cx - r / 3]], "Rampe West");
+      newEdge(v2, h2, RAMP_SPEED, RAMP_LANES, [[cy - r / 3, cx + r / 3]], "Rampe Ost");
+    }
+  }
+
+  invalidateSimulation();
+  renderEdgeList();
 }
 
 function onDemandPairSelected(aId, bId) {
   showModal("Route (Nachfrage)", [{ key: "vph", label: "Fahrzeuge pro Stunde", value: 300, step: 50 }], (values) => {
     if (!values.vph || values.vph <= 0) return;
     demand.push({ id: `d${++demandCounter}`, from: aId, to: bId, vehicles_per_hour: values.vph });
+    invalidateSimulation();
     renderDemandList();
   });
 }
@@ -360,6 +521,7 @@ function openSignalModal(nodeId) {
       } else {
         node.signal = null;
       }
+      invalidateSimulation();
       redrawNodeStyle(nodeId);
     },
     "Der Grünzeitanteil (Grünzeit / Umlaufzeit) reduziert in der Simulation die nutzbare Kapazität aller Straßen, die an dieser Kreuzung ankommen."
@@ -450,6 +612,19 @@ function clearCars() {
   carMarkers = [];
 }
 
+// Jede Netzänderung (neue/gelöschte Straße, andere Nachfrage, Sperrung, Ampel)
+// macht das letzte Simulationsergebnis ungültig. Ohne das hier zurückzusetzen,
+// blieben alte Auto-Punkte z.B. auf inzwischen gelöschten Straßen stehen und
+// Straßenfarben zeigten weiter den alten (jetzt falschen) Stau-Zustand.
+function invalidateSimulation() {
+  lastResult = null;
+  clearCars();
+  network.edges.forEach((e) => {
+    const line = edgeLinesById[e.id];
+    if (line) line.setStyle({ color: edgeColor(e.id), dashArray: closedEdges.has(e.id) ? "6 6" : null });
+  });
+}
+
 function updateCarAnimation(simResult) {
   clearCars();
   network.edges.forEach((edge) => {
@@ -472,7 +647,11 @@ function updateCarAnimation(simResult) {
         fillOpacity: 1,
         weight: 0,
       }).addTo(carLayer);
-      carMarkers.push({ marker, points, periodMs, offset: i / dotCount });
+      // Straßen sind im Modell beidseitig befahrbar (siehe simulation.js) -
+      // abwechselnd hin/zurück fahren lassen, statt dass alle Punkte nur in
+      // eine Richtung laufen.
+      const direction = i % 2 === 0 ? 1 : -1;
+      carMarkers.push({ marker, points, periodMs, offset: i / dotCount, direction });
     }
   });
   if (carMarkers.length) startCarAnimation();
@@ -483,7 +662,8 @@ function startCarAnimation() {
   function frame(now) {
     const elapsed = now - start;
     carMarkers.forEach((c) => {
-      const t = (elapsed / c.periodMs + c.offset) % 1;
+      const raw = (elapsed / c.periodMs + c.offset) % 1;
+      const t = c.direction === 1 ? raw : 1 - raw;
       c.marker.setLatLng(pointAlongPath(c.points, t));
     });
     carAnimHandle = requestAnimationFrame(frame);
@@ -494,6 +674,7 @@ function startCarAnimation() {
 function toggleClosed(edgeId) {
   if (closedEdges.has(edgeId)) closedEdges.delete(edgeId);
   else closedEdges.add(edgeId);
+  invalidateSimulation();
   renderEdgeList();
   const line = edgeLinesById[edgeId];
   if (line) {
@@ -504,6 +685,7 @@ function toggleClosed(edgeId) {
 function deleteEdge(edgeId) {
   network.edges = network.edges.filter((e) => e.id !== edgeId);
   closedEdges.delete(edgeId);
+  invalidateSimulation();
   if (edgeLinesById[edgeId]) {
     edgeLayer.removeLayer(edgeLinesById[edgeId]);
     delete edgeLinesById[edgeId];
@@ -513,6 +695,7 @@ function deleteEdge(edgeId) {
 
 function deleteDemand(demandId) {
   demand = demand.filter((d) => d.id !== demandId);
+  invalidateSimulation();
   renderDemandList();
 }
 

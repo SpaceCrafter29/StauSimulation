@@ -6,7 +6,6 @@
 <title>StauSimulation – Builder</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="css/style.css">
-<style>.active-tool { outline: 2px solid #fff; }</style>
 </head>
 <body data-mode="builder">
 <header>
@@ -18,17 +17,14 @@
   <div id="sidebar">
     <div class="sidebar-section">
       <h3>Werkzeug</h3>
-      <p class="hint">1) Knoten: Klick auf den Canvas.<br>2) Straße: Start-Knoten anklicken, optional Klicks auf freie Fläche für eine Kurve (z.B. Ausfahrt), dann Ziel-Knoten anklicken.<br>3) Route: zwei Knoten anklicken, Fahrzeuge/h eingeben.<br>4) Ampel: Knoten anklicken, Grün-/Umlaufzeit einstellen.<br>5) Sperren: auf eine Straße klicken.<br>Esc bricht eine Auswahl ab.</p>
-      <div class="row">
-        <button class="small active-tool" data-tool="node" onclick="setTool('node')">Knoten</button>
-        <button class="small secondary" data-tool="edge" onclick="setTool('edge')">Straße</button>
-      </div>
-      <div class="row">
-        <button class="small secondary" data-tool="demand" onclick="setTool('demand')">Route</button>
-        <button class="small secondary" data-tool="signal" onclick="setTool('signal')">Ampel</button>
-      </div>
-      <div class="row">
-        <button class="small secondary" data-tool="close" onclick="setTool('close')">Sperren</button>
+      <p class="hint">Knoten: Klick auf den Canvas. Straße: Start-Knoten anklicken, optional Klicks auf freie Fläche für eine Kurve, dann Ziel-Knoten. Kreuzung: Typ wählen, dann auf den Canvas klicken. Route: zwei Knoten anklicken, Fahrzeuge/h eingeben. Ampel: Knoten anklicken. Sperren: auf eine Straße klicken. <kbd>Esc</kbd> bricht ab.</p>
+      <div class="tool-grid">
+        <button class="tool-btn active-tool" data-tool="node" onclick="setTool('node')"><span class="tool-icon">📍</span>Knoten</button>
+        <button class="tool-btn" data-tool="edge" onclick="setTool('edge')"><span class="tool-icon">🛣️</span>Straße</button>
+        <button class="tool-btn" data-tool="junction" onclick="openJunctionPicker()"><span class="tool-icon">🔀</span>Kreuzung</button>
+        <button class="tool-btn" data-tool="demand" onclick="setTool('demand')"><span class="tool-icon">🚗</span>Route</button>
+        <button class="tool-btn" data-tool="signal" onclick="setTool('signal')"><span class="tool-icon">🚦</span>Ampel</button>
+        <button class="tool-btn" data-tool="close" onclick="setTool('close')"><span class="tool-icon">⛔</span>Sperren</button>
       </div>
     </div>
 
