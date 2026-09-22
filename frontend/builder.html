@@ -18,13 +18,16 @@
   <div id="sidebar">
     <div class="sidebar-section">
       <h3>Werkzeug</h3>
-      <p class="hint">1) Knoten setzen: Klick auf die Karte.<br>2) Straße verbinden: zwei Knoten anklicken.<br>3) Route/Nachfrage: zwei Knoten anklicken, Fahrzeuge/h eingeben.<br>4) Sperren: auf eine Straße klicken.</p>
+      <p class="hint">1) Knoten: Klick auf den Canvas.<br>2) Straße: Start-Knoten anklicken, optional Klicks auf freie Fläche für eine Kurve (z.B. Ausfahrt), dann Ziel-Knoten anklicken.<br>3) Route: zwei Knoten anklicken, Fahrzeuge/h eingeben.<br>4) Ampel: Knoten anklicken, Grün-/Umlaufzeit einstellen.<br>5) Sperren: auf eine Straße klicken.<br>Esc bricht eine Auswahl ab.</p>
       <div class="row">
         <button class="small active-tool" data-tool="node" onclick="setTool('node')">Knoten</button>
         <button class="small secondary" data-tool="edge" onclick="setTool('edge')">Straße</button>
       </div>
       <div class="row">
         <button class="small secondary" data-tool="demand" onclick="setTool('demand')">Route</button>
+        <button class="small secondary" data-tool="signal" onclick="setTool('signal')">Ampel</button>
+      </div>
+      <div class="row">
         <button class="small secondary" data-tool="close" onclick="setTool('close')">Sperren</button>
       </div>
     </div>

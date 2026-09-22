@@ -2,6 +2,12 @@
  * Gemeinsame Logik für builder.html und city.html.
  * Unterschied zwischen den Modi wird über `MODE` gesteuert ('builder' | 'city'),
  * das jede Seite vor dem Einbinden dieser Datei per <script> setzt.
+ *
+ * Im Builder-Modus ist die Karte ein leerer Canvas (Leaflet mit CRS.Simple,
+ * keine echten Kacheln) - node.lat/node.lon sind dort also keine echten
+ * Geo-Koordinaten, sondern nur eine ebene x/y-Zeichenfläche. Straßenlängen
+ * werden deshalb im Builder direkt vom Nutzer eingegeben, nicht aus
+ * Koordinaten berechnet.
  */
 
 const API_BASE = "";
@@ -14,58 +20,85 @@ let closedEdges = new Set();
 let nodeCounter = 0;
 let edgeCounter = 0;
 let demandCounter = 0;
-let currentTool = "node"; // 'node' | 'edge' | 'demand' | 'close'
-let pendingNodeId = null; // für den zwei-Klicks-Fluss bei 'edge' und 'demand'
+let currentTool = "node"; // 'node' | 'edge' | 'demand' | 'close' | 'signal'
+let pendingNodeId = null; // zwei-Klicks-Fluss bei 'demand'
+let pendingEdgeStart = null; // zwei/mehr-Klicks-Fluss bei 'edge'
+let pendingWaypoints = [];
+let previewLine = null;
 let lastResult = null;
 let edgeLinesById = {};
 let nodeMarkersById = {};
 
 function initMap() {
-  map = L.map("map").setView([51.1657, 10.4515], 6);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap-Mitwirkende",
-    maxZoom: 19,
-  }).addTo(map);
+  if (MODE === "builder") {
+    map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 8 }).setView([0, 0], 2);
+    document.getElementById("map").classList.add("blank-canvas");
+  } else {
+    map = L.map("map").setView([51.1657, 10.4515], 6);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap-Mitwirkende",
+      maxZoom: 19,
+    }).addTo(map);
+  }
   nodeLayer = L.layerGroup().addTo(map);
   edgeLayer = L.layerGroup().addTo(map);
+  map.on("click", (e) => onMapClick(e.latlng));
 
-  if (MODE === "builder") {
-    map.on("click", (e) => {
-      if (currentTool === "node") {
-        addNode(e.latlng.lat, e.latlng.lng);
-      }
-    });
-  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") cancelPending();
+  });
 }
 
 function setTool(tool) {
   currentTool = tool;
-  pendingNodeId = null;
+  cancelPending();
   document.querySelectorAll("[data-tool]").forEach((el) => {
     el.classList.toggle("active-tool", el.dataset.tool === tool);
   });
+}
+
+function cancelPending() {
   clearPendingHighlight();
+  pendingNodeId = null;
+  pendingEdgeStart = null;
+  pendingWaypoints = [];
+  if (previewLine) {
+    edgeLayer.removeLayer(previewLine);
+    previewLine = null;
+  }
 }
 
 function clearPendingHighlight() {
-  Object.values(nodeMarkersById).forEach((m) => m.setStyle({ weight: 2 }));
+  network.nodes.forEach((n) => redrawNodeStyle(n.id));
+}
+
+function onMapClick(latlng) {
+  if (currentTool === "node" && MODE === "builder") {
+    addNode(latlng.lat, latlng.lng);
+  } else if (currentTool === "edge" && pendingEdgeStart !== null) {
+    // Klick auf leere Fläche während eine Straße gezogen wird -> Kurvenpunkt
+    // (z.B. für eine Ausfahrt/Rampe, die nicht schnurgerade ist)
+    pendingWaypoints.push([latlng.lat, latlng.lng]);
+    updatePreviewLine();
+  }
 }
 
 function addNode(lat, lon) {
   const id = `n${++nodeCounter}`;
-  network.nodes.push({ id, lat, lon });
-  drawNode({ id, lat, lon });
+  network.nodes.push({ id, lat, lon, signal: null });
+  drawNode({ id, lat, lon, signal: null });
   return id;
 }
 
+function nodeMarkerStyle(node) {
+  if (node.signal) {
+    return { radius: 7, color: "#e0b93d", fillColor: "#e0b93d", fillOpacity: 0.95, weight: 3, className: "node-signal" };
+  }
+  return { radius: 6, color: "#4f8cff", fillColor: "#4f8cff", fillOpacity: 0.9, weight: 2 };
+}
+
 function drawNode(node) {
-  const marker = L.circleMarker([node.lat, node.lon], {
-    radius: 6,
-    color: "#4f8cff",
-    fillColor: "#4f8cff",
-    fillOpacity: 0.9,
-    weight: 2,
-  }).addTo(nodeLayer);
+  const marker = L.circleMarker([node.lat, node.lon], nodeMarkerStyle(node)).addTo(nodeLayer);
   marker.on("click", (e) => {
     L.DomEvent.stopPropagation(e);
     onNodeClick(node.id);
@@ -73,64 +106,188 @@ function drawNode(node) {
   nodeMarkersById[node.id] = marker;
 }
 
+function redrawNodeStyle(nodeId) {
+  const node = network.nodes.find((n) => n.id === nodeId);
+  const marker = nodeMarkersById[nodeId];
+  if (!node || !marker) return;
+  const style = nodeMarkerStyle(node);
+  if (nodeId === pendingEdgeStart || nodeId === pendingNodeId) {
+    style.weight = 5;
+    style.color = "#3ecf8e";
+  }
+  marker.setStyle(style);
+}
+
 function onNodeClick(nodeId) {
   if (currentTool === "edge") {
-    handleTwoClickFlow(nodeId, onEdgePairSelected);
+    if (pendingEdgeStart === null) {
+      pendingEdgeStart = nodeId;
+      pendingWaypoints = [];
+      redrawNodeStyle(nodeId);
+    } else if (pendingEdgeStart === nodeId) {
+      cancelPending();
+    } else {
+      const startId = pendingEdgeStart;
+      const waypoints = pendingWaypoints;
+      cancelPending();
+      finishEdge(startId, nodeId, waypoints);
+    }
   } else if (currentTool === "demand") {
     handleTwoClickFlow(nodeId, onDemandPairSelected);
+  } else if (currentTool === "signal") {
+    openSignalModal(nodeId);
   }
 }
 
 function handleTwoClickFlow(nodeId, onComplete) {
   if (pendingNodeId === null) {
     pendingNodeId = nodeId;
-    nodeMarkersById[nodeId].setStyle({ weight: 5, color: "#e0b93d" });
+    redrawNodeStyle(nodeId);
   } else if (pendingNodeId === nodeId) {
-    // gleicher Knoten nochmal geklickt -> Auswahl aufheben
-    clearPendingHighlight();
-    pendingNodeId = null;
+    cancelPending();
   } else {
     const a = pendingNodeId;
-    clearPendingHighlight();
-    pendingNodeId = null;
+    cancelPending();
     onComplete(a, nodeId);
   }
 }
 
-function onEdgePairSelected(aId, bId) {
-  const speedStr = prompt("Tempolimit (km/h)?", "50");
-  if (speedStr === null) return;
-  const lanesStr = prompt("Fahrstreifen (pro Richtung)?", "1");
-  if (lanesStr === null) return;
-  const speed = parseFloat(speedStr) || 50;
-  const lanes = parseInt(lanesStr, 10) || 1;
-  const id = `e${++edgeCounter}`;
-  const nodeA = network.nodes.find((n) => n.id === aId);
-  const nodeB = network.nodes.find((n) => n.id === bId);
-  const length_km = haversineKm(nodeA.lat, nodeA.lon, nodeB.lat, nodeB.lon);
-  const edge = { id, from: aId, to: bId, length_km, speed_kmh: speed, lanes, name: null };
-  network.edges.push(edge);
-  drawEdge(edge);
-  renderEdgeList();
+function updatePreviewLine() {
+  if (previewLine) {
+    edgeLayer.removeLayer(previewLine);
+    previewLine = null;
+  }
+  if (pendingEdgeStart === null) return;
+  const startNode = network.nodes.find((n) => n.id === pendingEdgeStart);
+  const points = [[startNode.lat, startNode.lon], ...pendingWaypoints];
+  if (points.length < 2) return;
+  previewLine = L.polyline(points, { color: "#3ecf8e", weight: 3, dashArray: "4 6" }).addTo(edgeLayer);
+}
+
+/* --- Generisches Modal (ersetzt native prompt()-Dialoge zuverlässig) --- */
+function showModal(title, fields, onSubmit, hint) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const box = document.createElement("div");
+  box.className = "modal-box";
+  box.innerHTML = `<h3>${title}</h3>`;
+
+  const inputs = {};
+  fields.forEach((f) => {
+    const label = document.createElement("label");
+    label.textContent = f.label;
+    box.appendChild(label);
+    const input = document.createElement("input");
+    input.type = f.type === "checkbox" ? "checkbox" : f.type === "text" ? "text" : "number";
+    if (f.type === "checkbox") {
+      input.checked = !!f.value;
+    } else {
+      input.value = f.value ?? "";
+      if (f.step !== undefined) input.step = f.step;
+    }
+    box.appendChild(input);
+    inputs[f.key] = input;
+  });
+
+  if (hint) {
+    const hintEl = document.createElement("p");
+    hintEl.className = "modal-hint";
+    hintEl.textContent = hint;
+    box.appendChild(hintEl);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "secondary";
+  cancelBtn.textContent = "Abbrechen";
+  const okBtn = document.createElement("button");
+  okBtn.textContent = "OK";
+  actions.appendChild(cancelBtn);
+  actions.appendChild(okBtn);
+  box.appendChild(actions);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function close() {
+    document.body.removeChild(overlay);
+  }
+  cancelBtn.onclick = close;
+  overlay.onclick = (e) => {
+    if (e.target === overlay) close();
+  };
+  okBtn.onclick = () => {
+    const values = {};
+    fields.forEach((f) => {
+      const input = inputs[f.key];
+      values[f.key] = f.type === "checkbox" ? input.checked : f.type === "text" ? input.value : parseFloat(input.value);
+    });
+    close();
+    onSubmit(values);
+  };
+
+  const firstInput = box.querySelector("input");
+  if (firstInput) firstInput.focus();
+}
+
+function finishEdge(aId, bId, waypoints) {
+  showModal(
+    "Straße anlegen",
+    [
+      { key: "length_km", label: "Länge (km)", value: 1, step: 0.1 },
+      { key: "speed_kmh", label: "Tempolimit (km/h)", value: 50, step: 5 },
+      { key: "lanes", label: "Fahrstreifen (pro Richtung)", value: 1, step: 1 },
+      { key: "name", label: "Name (optional)", value: "", type: "text" },
+    ],
+    (values) => {
+      const id = `e${++edgeCounter}`;
+      const edge = {
+        id,
+        from: aId,
+        to: bId,
+        length_km: values.length_km > 0 ? values.length_km : 1,
+        speed_kmh: values.speed_kmh > 0 ? values.speed_kmh : 50,
+        lanes: Math.max(1, Math.round(values.lanes) || 1),
+        name: values.name || null,
+        waypoints,
+      };
+      network.edges.push(edge);
+      drawEdge(edge);
+      renderEdgeList();
+    }
+  );
 }
 
 function onDemandPairSelected(aId, bId) {
-  const vphStr = prompt("Fahrzeuge pro Stunde auf dieser Route?", "300");
-  if (vphStr === null) return;
-  const vph = parseFloat(vphStr) || 0;
-  if (vph <= 0) return;
-  demand.push({ id: `d${++demandCounter}`, from: aId, to: bId, vehicles_per_hour: vph });
-  renderDemandList();
+  showModal("Route (Nachfrage)", [{ key: "vph", label: "Fahrzeuge pro Stunde", value: 300, step: 50 }], (values) => {
+    if (!values.vph || values.vph <= 0) return;
+    demand.push({ id: `d${++demandCounter}`, from: aId, to: bId, vehicles_per_hour: values.vph });
+    renderDemandList();
+  });
 }
 
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
+function openSignalModal(nodeId) {
+  const node = network.nodes.find((n) => n.id === nodeId);
+  const existing = node.signal;
+  showModal(
+    "Ampel einstellen",
+    [
+      { key: "hasSignal", label: "Ampel an dieser Kreuzung", value: !!existing, type: "checkbox" },
+      { key: "cycle_s", label: "Umlaufzeit (Sekunden)", value: existing ? existing.cycle_s : 60, step: 5 },
+      { key: "green_s", label: "Grünzeit (Sekunden)", value: existing ? existing.green_s : 30, step: 5 },
+    ],
+    (values) => {
+      if (values.hasSignal) {
+        const cycle = Math.max(1, values.cycle_s || 60);
+        const green = Math.max(0, Math.min(cycle, values.green_s || 0));
+        node.signal = { cycle_s: cycle, green_s: green };
+      } else {
+        node.signal = null;
+      }
+      redrawNodeStyle(nodeId);
+    },
+    "Der Grünzeitanteil (Grünzeit / Umlaufzeit) reduziert in der Simulation die nutzbare Kapazität aller Straßen, die an dieser Kreuzung ankommen."
+  );
 }
 
 function edgeColor(edgeId) {
@@ -149,17 +306,12 @@ function drawEdge(edge) {
   const nodeA = network.nodes.find((n) => n.id === edge.from);
   const nodeB = network.nodes.find((n) => n.id === edge.to);
   if (!nodeA || !nodeB) return;
-  const line = L.polyline(
-    [
-      [nodeA.lat, nodeA.lon],
-      [nodeB.lat, nodeB.lon],
-    ],
-    {
-      color: edgeColor(edge.id),
-      weight: 4,
-      dashArray: closedEdges.has(edge.id) ? "6 6" : null,
-    }
-  ).addTo(edgeLayer);
+  const points = [[nodeA.lat, nodeA.lon], ...(edge.waypoints || []), [nodeB.lat, nodeB.lon]];
+  const line = L.polyline(points, {
+    color: edgeColor(edge.id),
+    weight: 4,
+    dashArray: closedEdges.has(edge.id) ? "6 6" : null,
+  }).addTo(edgeLayer);
   line.bindTooltip(edgeTooltip(edge), { sticky: true });
   line.on("click", (e) => {
     L.DomEvent.stopPropagation(e);
@@ -219,8 +371,9 @@ function renderEdgeList() {
     .map((e) => {
       const checked = closedEdges.has(e.id) ? "checked" : "";
       const label = e.name || `${e.from} → ${e.to}`;
+      const curveNote = e.waypoints && e.waypoints.length ? " · kurvig" : "";
       return `<tr>
-        <td>${label}<br><span class="empty-note">${e.length_km.toFixed(2)} km · ${e.speed_kmh} km/h · ${e.lanes} Spur(en)</span></td>
+        <td>${label}<br><span class="empty-note">${e.length_km.toFixed(2)} km · ${e.speed_kmh} km/h · ${e.lanes} Spur(en)${curveNote}</span></td>
         <td style="text-align:center"><input type="checkbox" ${checked} onchange="toggleClosed('${e.id}')" title="gesperrt"></td>
         <td><button class="small secondary" onclick="deleteEdge('${e.id}')">✕</button></td>
       </tr>`;
@@ -253,7 +406,7 @@ function renderDemandList() {
 
 function networkToApiFormat() {
   return {
-    nodes: network.nodes.map((n) => ({ id: n.id, lat: n.lat, lon: n.lon })),
+    nodes: network.nodes.map((n) => ({ id: n.id, lat: n.lat, lon: n.lon, signal: n.signal || null })),
     edges: network.edges.map((e) => ({
       id: e.id,
       from: e.from,

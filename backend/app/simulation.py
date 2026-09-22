@@ -45,14 +45,30 @@ def _bpr_time(edge: _EdgeState) -> float:
     return edge.free_flow_time * (1 + BPR_ALPHA * (edge.flow / edge.capacity) ** BPR_BETA)
 
 
+def _signal_green_ratio(node) -> float:
+    """g/C - Anteil der Umlaufzeit, den eine Ampel Grün zeigt.
+
+    Vereinfachtes Standardmodell für die Kapazität signalisierter Kreuzungen
+    (HCM-Grundidee): die nutzbare Kapazität einer Zufahrt sinkt proportional
+    zum Grünzeitanteil. Da hier keine Fahrtrichtung je Kante unterschieden
+    wird, wirkt der Faktor auf die Kante insgesamt, sobald einer ihrer beiden
+    Endknoten eine Ampel hat (bei beiden Enden werden die Faktoren multipliziert).
+    """
+    if node.signal is None or node.signal.cycle_s <= 0:
+        return 1.0
+    return max(0.0, min(1.0, node.signal.green_s / node.signal.cycle_s))
+
+
 def _build_graph(network: Network, closed_edges: set) -> Tuple[Dict[str, List[_EdgeState]], Dict[str, _EdgeState]]:
     adjacency: Dict[str, List[_EdgeState]] = defaultdict(list)
     edges_by_id: Dict[str, _EdgeState] = {}
+    nodes_by_id = {n.id: n for n in network.nodes}
     for e in network.edges:
         if e.id in closed_edges:
             continue
         free_flow_time = e.length_km / e.speed_kmh * 60  # Minuten
-        capacity = e.lanes * CAPACITY_PER_LANE_VPH
+        green_ratio = _signal_green_ratio(nodes_by_id[e.from_id]) * _signal_green_ratio(nodes_by_id[e.to_id])
+        capacity = e.lanes * CAPACITY_PER_LANE_VPH * green_ratio
         state = _EdgeState(e.id, e.from_id, e.to_id, free_flow_time, capacity)
         edges_by_id[e.id] = state
         # Straßen werden hier als beidseitig befahrbar angenommen (keine Einbahnstraßen-Modellierung in v1)

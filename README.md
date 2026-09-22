@@ -20,14 +20,19 @@ Details zur Methode: [backend/app/simulation.py](backend/app/simulation.py)
 
 ## Zwei Modi
 
-- **Builder** (`builder.html`): eigenes Straßennetz von Hand auf der Karte anlegen.
+- **Builder** (`builder.html`): eigenes Straßennetz von Hand auf einem leeren Canvas
+  anlegen (keine echte Geografie, nur eine Zeichenfläche). Straßen können über
+  Zwischenpunkte kurvig gezogen werden (z.B. für Ausfahrten/Rampen), Kreuzungen
+  können als Ampel konfiguriert werden (Umlaufzeit + Grünzeit).
 - **Stadt laden** (`city.html`): reales Hauptstraßennetz einer Stadt über
   OpenStreetMap (Nominatim + Overpass API) laden. Es werden nur "Hauptstraßen"
   geladen (motorway/trunk/primary/secondary...), keine Wohnstraßen – sonst wird der
   Graph zu groß.
 
 In beiden Modi: Routen/Nachfrage definieren (zwei Kreuzungen anklicken, Fahrzeuge/h
-eingeben), Straßen sperren, "Simulation starten" → Vergleich vorher/nachher.
+eingeben), Straßen sperren, "Simulation starten" → Vergleich vorher/nachher. Alle
+Eingaben (Straßendaten, Nachfrage, Ampel) laufen über Formulare, nicht über
+Browser-`prompt()`-Dialoge.
 
 ## Setup
 
@@ -46,12 +51,18 @@ auch das Frontend mit aus (kein zweiter Server nötig).
 
 - Straßen werden als beidseitig befahrbar angenommen (keine Einbahnstraßen).
 - Verkehrsnachfrage wird manuell eingegeben, nicht aus echten Zähldaten abgeleitet.
-- Kapazität pro Fahrstreifen ist ein fester Richtwert (1800 Fz/h, HCM-Standard),
-  keine Berücksichtigung von Ampeln/Kreuzungskapazität.
+- Kapazität pro Fahrstreifen ist ein fester Richtwert (1800 Fz/h, HCM-Standard).
+- Ampeln wirken als einfacher Grünzeitanteil (g/C) auf die Kapazität der
+  anliegenden Straßen (vereinfachtes HCM-Modell); keine Berücksichtigung von
+  Versatzzeiten ("grüne Welle") zwischen mehreren Ampeln.
+- Kurven an Straßen (Wegpunkte) sind rein zur Darstellung; die Streckenlänge für
+  die Simulation wird weiterhin direkt eingegeben, nicht aus der Kurve berechnet.
 - Beim Städte-Import werden Wege an gerundeten Koordinaten zu Kreuzungen
   zusammengeführt; sehr dicht beieinanderliegende, eigentlich getrennte Punkte
-  könnten in seltenen Fällen fälschlich verschmelzen.
+  könnten in seltenen Fällen fälschlich verschmelzen. Ampeln werden dort noch
+  nicht automatisch aus OSM-Daten (`highway=traffic_signals`) übernommen.
 
 Gute Ansatzpunkte für weitere Features (z.B. in eigenen Branches): Einbahnstraßen,
-Ampel-/Kreuzungsmodellierung, echte Verkehrszähldaten statt manueller Nachfrage,
-Export/Import von Netzwerken als JSON, mehrere gleichzeitige Sperrungen vergleichen.
+echte Verkehrszähldaten statt manueller Nachfrage, Export/Import von Netzwerken als
+JSON, mehrere gleichzeitige Sperrungen vergleichen, Ampeln aus OSM-Daten für den
+Stadt-Modus automatisch übernehmen.

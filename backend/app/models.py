@@ -2,10 +2,16 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class SignalConfig(BaseModel):
+    cycle_s: float  # Umlaufzeit einer Ampelphase (Sekunden)
+    green_s: float  # davon Grünzeit für den Verkehr an dieser Kreuzung (Sekunden)
+
+
 class Node(BaseModel):
     id: str
     lat: float
     lon: float
+    signal: Optional[SignalConfig] = None
 
 
 class Edge(BaseModel):
