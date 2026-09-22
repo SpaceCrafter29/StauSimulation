@@ -14,7 +14,7 @@ from .models import (
 from .osm import CityNotFoundError, fetch_city_network
 from .simulation import run_simulation
 
-app = FastAPI(title="StauSimulation API")
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +29,7 @@ def network_from_city(req: CityNetworkRequest):
     try:
         result = fetch_city_network(req.city)
     except CityNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return CityNetworkResponse(**result)
 
 
