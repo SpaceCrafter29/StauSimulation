@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StauSimulation – Builder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+<style>.active-tool { outline: 2px solid #fff; }</style>
+</head>
+<body data-mode="builder">
+<header>
+  <h1>🛠️ Netzwerk-Builder</h1>
+  <a href="index.html">← Zum Menü</a>
+</header>
+
+<div class="app-layout">
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <h3>Werkzeug</h3>
+      <p class="hint">1) Knoten setzen: Klick auf die Karte.<br>2) Straße verbinden: zwei Knoten anklicken.<br>3) Route/Nachfrage: zwei Knoten anklicken, Fahrzeuge/h eingeben.<br>4) Sperren: auf eine Straße klicken.</p>
+      <div class="row">
+        <button class="small active-tool" data-tool="node" onclick="setTool('node')">Knoten</button>
+        <button class="small secondary" data-tool="edge" onclick="setTool('edge')">Straße</button>
+      </div>
+      <div class="row">
+        <button class="small secondary" data-tool="demand" onclick="setTool('demand')">Route</button>
+        <button class="small secondary" data-tool="close" onclick="setTool('close')">Sperren</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Straßen</h3>
+      <div id="edgeList"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Nachfrage (Routen)</h3>
+      <div id="demandList"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <button id="simulateBtn" onclick="runComparison()" style="width:100%">Simulation starten</button>
+    </div>
+
+    <div class="sidebar-section" style="border-bottom:none">
+      <h3>Ergebnisse</h3>
+      <div id="results"><p class="empty-note">Noch keine Simulation durchgeführt.</p></div>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>const MODE = "builder";</script>
+<script src="js/app.js"></script>
+<script>
+  initMap();
+  renderEdgeList();
+  renderDemandList();
+</script>
+</body>
+</html>

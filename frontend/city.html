@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StauSimulation – Stadt laden</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+<style>.active-tool { outline: 2px solid #fff; }</style>
+</head>
+<body data-mode="city">
+<header>
+  <h1>🗺️ Stadt laden</h1>
+  <a href="index.html">← Zum Menü</a>
+</header>
+
+<div class="app-layout">
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <h3>Stadt</h3>
+      <div class="row">
+        <input id="cityInput" type="text" placeholder="z.B. Freiburg im Breisgau">
+        <button class="grow-0" onclick="loadCity()">Laden</button>
+      </div>
+      <p id="cityStatus" class="hint"></p>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Werkzeug</h3>
+      <p class="hint">Route/Nachfrage: zwei Kreuzungen anklicken, Fahrzeuge/h eingeben.<br>Sperren: auf eine Straße klicken.</p>
+      <div class="row">
+        <button class="small active-tool" data-tool="demand" onclick="setTool('demand')">Route</button>
+        <button class="small secondary" data-tool="close" onclick="setTool('close')">Sperren</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Straßen</h3>
+      <div id="edgeList"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Nachfrage (Routen)</h3>
+      <div id="demandList"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <button id="simulateBtn" onclick="runComparison()" style="width:100%">Simulation starten</button>
+    </div>
+
+    <div class="sidebar-section" style="border-bottom:none">
+      <h3>Ergebnisse</h3>
+      <div id="results"><p class="empty-note">Noch keine Simulation durchgeführt.</p></div>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>const MODE = "city";</script>
+<script src="js/app.js"></script>
+<script>
+  initMap();
+  setTool("demand");
+  renderEdgeList();
+  renderDemandList();
+
+  async function loadCity() {
+    const city = document.getElementById("cityInput").value.trim();
+    if (!city) return;
+    const status = document.getElementById("cityStatus");
+    status.textContent = "Lade Straßennetz...";
+    try {
+      const resp = await fetch("/api/network/from-city", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ city }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `Serverfehler (${resp.status})`);
+      }
+      const data = await resp.json();
+      network = data.network;
+      closedEdges = new Set();
+      demand = [];
+      lastResult = null;
+      redrawAll();
+      renderEdgeList();
+      renderDemandList();
+      document.getElementById("results").innerHTML = '<p class="empty-note">Noch keine Simulation durchgeführt.</p>';
+
+      if (network.nodes.length) {
+        const bounds = L.latLngBounds(network.nodes.map((n) => [n.lat, n.lon]));
+        map.fitBounds(bounds, { padding: [20, 20] });
+      }
+      status.textContent = `${network.nodes.length} Kreuzungen, ${network.edges.length} Straßenabschnitte geladen.` +
+        (data.note ? ` ⚠ ${data.note}` : "");
+    } catch (err) {
+      status.textContent = `Fehler: ${err.message}`;
+    }
+  }
+</script>
+</body>
+</html>
