@@ -58,6 +58,8 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>const MODE = "city";</script>
+<script src="js/simulation.js"></script>
+<script src="js/osm-import.js"></script>
 <script src="js/app.js"></script>
 <script>
   initMap();
@@ -69,18 +71,9 @@
     const city = document.getElementById("cityInput").value.trim();
     if (!city) return;
     const status = document.getElementById("cityStatus");
-    status.textContent = "Lade Straßennetz...";
+    status.textContent = "Lade Straßennetz... (kann bei überlasteten OSM-Servern eine Weile dauern)";
     try {
-      const resp = await fetch("/api/network/from-city", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `Serverfehler (${resp.status})`);
-      }
-      const data = await resp.json();
+      const data = await fetchCityNetwork(city);
       network = data.network;
       closedEdges = new Set();
       demand = [];

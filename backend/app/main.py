@@ -11,7 +11,7 @@ from .models import (
     SimulateRequest,
     SimulationResult,
 )
-from .osm import CityNotFoundError, fetch_city_network
+from .osm import CityNotFoundError, OverpassUnavailableError, fetch_city_network
 from .simulation import run_simulation
 
 app = FastAPI(title="StauSimulation API")
@@ -30,6 +30,8 @@ def network_from_city(req: CityNetworkRequest):
         result = fetch_city_network(req.city)
     except CityNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except OverpassUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     return CityNetworkResponse(**result)
 
 

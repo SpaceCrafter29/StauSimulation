@@ -12,12 +12,20 @@ Ablauf:
 """
 
 import math
-from typing import Optional, Tuple
+from collections import defaultdict, deque
+from typing import Dict, Optional, Tuple
 
 import requests
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Der öffentliche Overpass-Server ist häufig überlastet (504 Gateway Timeout),
+# besonders bei größeren Städten. Mehrere Spiegel-Server der Reihe nach
+# probieren, statt bei einem einzigen Timeout sofort aufzugeben.
+OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter",
+]
 USER_AGENT = "StauSimulation-JugendForscht/0.1 (+https://github.com/SpaceCrafter29/StauSimulation)"
 
 # Nur "Hauptstraßen" laden (siehe Anforderung), keine Wohnstraßen/Feldwege -
@@ -37,6 +45,10 @@ MAX_BBOX_SPAN_DEG = 0.4  # ~ 40-45 km; verhindert riesige Overpass-Anfragen bei 
 
 
 class CityNotFoundError(Exception):
+    pass
+
+
+class OverpassUnavailableError(Exception):
     pass
 
 
@@ -107,13 +119,22 @@ def _parse_lanes(value: Optional[str]) -> Optional[int]:
 def _fetch_overpass_ways(bbox: dict) -> list:
     highway_filter = "|".join(HIGHWAY_DEFAULTS.keys())
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:50];
     way["highway"~"^({highway_filter})$"]({bbox['south']},{bbox['west']},{bbox['north']},{bbox['east']});
     out geom;
     """
-    resp = requests.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=30)
-    resp.raise_for_status()
-    return resp.json().get("elements", [])
+    last_error: Optional[Exception] = None
+    for url in OVERPASS_URLS:
+        try:
+            resp = requests.post(url, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=55)
+            resp.raise_for_status()
+            return resp.json().get("elements", [])
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+            continue
+    raise OverpassUnavailableError(
+        "Die OpenStreetMap-Server sind gerade überlastet oder nicht erreichbar. Bitte in ein paar Minuten nochmal versuchen."
+    ) from last_error
 
 
 def _parse_ways_to_network(elements: list) -> dict:
@@ -166,11 +187,87 @@ def _parse_ways_to_network(elements: list) -> dict:
     return {"nodes": node_list, "edges": edges}
 
 
+def _simplify_network(nodes: list, edges: list) -> Tuple[list, list]:
+    """Kontrahiert Ketten von reinen Geometriepunkten zu einer Kante.
+
+    OSM-Straßen bestehen aus vielen Stützpunkten für die Kurvenform, die aber
+    keine echten Kreuzungen sind (Grad 2: genau zwei Kanten treffen sich dort,
+    ohne Abzweigung). Solche Punkte werden hier zu EINER Kante zusammengefasst
+    (Länge wird aufsummiert, bleibt also exakt erhalten) - dieselbe Grundidee
+    wie "Shortcut"-Kontraktion in echten Routing-Engines. Übrig bleiben nur
+    echte Kreuzungen und Sackgassen. Für Köln reduziert das den Graphen von
+    Zehntausenden auf wenige tausend Knoten, was Import, Simulation und das
+    Zeichnen im Browser deutlich beschleunigt. Die Straßen werden dadurch auf
+    der Karte als Geraden zwischen echten Kreuzungen dargestellt statt entlang
+    der exakten Kurvenform - die simulierte Streckenlänge bleibt aber korrekt.
+    """
+    edges_by_id = {e["id"]: dict(e) for e in edges}
+    adjacency: Dict[str, set] = defaultdict(set)
+    for e in edges_by_id.values():
+        adjacency[e["from"]].add(e["id"])
+        adjacency[e["to"]].add(e["id"])
+
+    def other_end(edge: dict, node_id: str) -> str:
+        return edge["to"] if edge["from"] == node_id else edge["from"]
+
+    def compatible(e1: dict, e2: dict) -> bool:
+        return (e1["speed_kmh"], e1["lanes"], e1["name"]) == (e2["speed_kmh"], e2["lanes"], e2["name"])
+
+    queue = deque(nid for nid, eids in adjacency.items() if len(eids) == 2)
+    removed_nodes = set()
+
+    while queue:
+        nid = queue.popleft()
+        if nid in removed_nodes or len(adjacency.get(nid, ())) != 2:
+            continue
+        eid1, eid2 = tuple(adjacency[nid])
+        if eid1 == eid2 or eid1 not in edges_by_id or eid2 not in edges_by_id:
+            continue
+        e1, e2 = edges_by_id[eid1], edges_by_id[eid2]
+        if not compatible(e1, e2):
+            continue
+        n1, n2 = other_end(e1, nid), other_end(e2, nid)
+        if n1 == n2 or n1 == nid or n2 == nid:
+            continue  # würde eine Schleife erzeugen - überspringen
+
+        merged = {
+            "id": eid1,
+            "from": n1,
+            "to": n2,
+            "length_km": e1["length_km"] + e2["length_km"],
+            "speed_kmh": e1["speed_kmh"],
+            "lanes": e1["lanes"],
+            "name": e1["name"],
+        }
+        del edges_by_id[eid1]
+        del edges_by_id[eid2]
+        adjacency[n1] -= {eid1, eid2}
+        adjacency[n2] -= {eid1, eid2}
+        del adjacency[nid]
+        removed_nodes.add(nid)
+
+        edges_by_id[merged["id"]] = merged
+        adjacency[n1].add(merged["id"])
+        adjacency[n2].add(merged["id"])
+
+        for candidate in (n1, n2):
+            if len(adjacency.get(candidate, ())) == 2:
+                queue.append(candidate)
+
+    final_nodes = [n for n in nodes if n["id"] not in removed_nodes]
+    final_edges = list(edges_by_id.values())
+    return final_nodes, final_edges
+
+
 def fetch_city_network(city_name: str) -> dict:
     bbox = _geocode_city(city_name)
     bbox, clamped = _clamp_bbox(bbox)
     elements = _fetch_overpass_ways(bbox)
     network = _parse_ways_to_network(elements)
+    nodes_before = len(network["nodes"])
+    simplified_nodes, simplified_edges = _simplify_network(network["nodes"], network["edges"])
+    network = {"nodes": simplified_nodes, "edges": simplified_edges}
+
     note = None
     if clamped:
         note = "Das Gebiet wurde auf ca. 40 km Kantenlänge begrenzt (nur Hauptstraßen, sonst zu viele Daten)."

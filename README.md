@@ -16,25 +16,50 @@ Eine Sperrung wird simuliert, indem die entsprechende Kante aus dem Graphen entf
 und die Umlegung erneut berechnet wird. Verglichen werden dann Gesamtbelastung des
 Netzes und Fahrzeiten einzelner Routen vorher/nachher.
 
-Details zur Methode: [backend/app/simulation.py](backend/app/simulation.py)
+Details zur Methode: [backend/app/simulation.py](backend/app/simulation.py) (Python) bzw.
+[frontend/js/simulation.js](frontend/js/simulation.js) (identische Logik in JavaScript,
+läuft direkt im Browser).
 
 ## Zwei Modi
 
-- **Builder** (`builder.html`): eigenes Straßennetz von Hand auf einem leeren Canvas
-  anlegen (keine echte Geografie, nur eine Zeichenfläche). Straßen können über
-  Zwischenpunkte kurvig gezogen werden (z.B. für Ausfahrten/Rampen), Kreuzungen
-  können als Ampel konfiguriert werden (Umlaufzeit + Grünzeit).
+- **Builder** (`builder.html`) – der Hauptfokus des Projekts: eigenes Straßennetz von
+  Hand auf einem leeren Canvas anlegen (keine echte Geografie, nur eine
+  Zeichenfläche). Straßentyp-Presets (Autobahn/Landstraße/Bundesstraße/
+  Stadtstraße/Wohnstraße) füllen Tempolimit und Fahrstreifen vor, bleiben aber
+  editierbar. Straßen können über Zwischenpunkte kurvig gezogen werden (z.B. für
+  Ausfahrten/Rampen), Kreuzungen können als Ampel konfiguriert werden (Umlaufzeit +
+  Grünzeit). Nach einer Simulation zeigen animierte rote Punkte den simulierten
+  Fahrzeugfluss auf jeder Straße (Anzahl/Tempo grob proportional zu Fluss/Fahrzeit).
 - **Stadt laden** (`city.html`): reales Hauptstraßennetz einer Stadt über
   OpenStreetMap (Nominatim + Overpass API) laden. Es werden nur "Hauptstraßen"
   geladen (motorway/trunk/primary/secondary...), keine Wohnstraßen – sonst wird der
-  Graph zu groß.
+  Graph zu groß. **Bekanntes Problem:** die öffentlichen Overpass-Server sind
+  häufig überlastet und antworten dann sehr langsam oder mit Timeout, besonders bei
+  großen Städten – das liegt außerhalb unserer Kontrolle (mehrere Spiegel-Server
+  werden der Reihe nach probiert, hilft aber nicht immer). Aktuell nicht der
+  Entwicklungsfokus.
 
 In beiden Modi: Routen/Nachfrage definieren (zwei Kreuzungen anklicken, Fahrzeuge/h
 eingeben), Straßen sperren, "Simulation starten" → Vergleich vorher/nachher. Alle
 Eingaben (Straßendaten, Nachfrage, Ampel) laufen über Formulare, nicht über
 Browser-`prompt()`-Dialoge.
 
-## Setup
+## Ohne Server nutzen (GitHub Pages)
+
+Simulation und Stadt-Import laufen komplett im Browser (`frontend/js/simulation.js`,
+`frontend/js/osm-import.js` rufen Nominatim/Overpass direkt vom Client aus auf). Der
+`frontend/`-Ordner ist deshalb eine eigenständige statische Website – einfach
+`frontend/index.html` öffnen, oder auf GitHub Pages deployen: der Workflow
+[.github/workflows/deploy-pages.yml](.github/workflows/deploy-pages.yml) deployt bei
+jedem Push auf `main` automatisch. Dafür einmalig in den Repo-Einstellungen
+**Settings → Pages → Source: GitHub Actions** wählen.
+
+## Lokal mit Backend (optional)
+
+Es gibt zusätzlich ein Python-Backend (`backend/`) mit identischer Simulationslogik,
+z.B. für spätere serverseitige Auswertung großer Netze. Das Frontend nutzt es aktuell
+nicht (siehe oben) – für lokale Entwicklung reicht `frontend/index.html` direkt zu
+öffnen. Zum Backend selbst:
 
 ```bash
 cd backend
@@ -45,7 +70,7 @@ uvicorn app.main:app --reload
 ```
 
 Dann [http://localhost:8000](http://localhost:8000) öffnen – das Backend liefert
-auch das Frontend mit aus (kein zweiter Server nötig).
+in diesem Modus auch das Frontend mit aus.
 
 ## Bekannte Vereinfachungen (v1 / MVP)
 
